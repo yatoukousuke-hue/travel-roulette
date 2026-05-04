@@ -1,0 +1,16 @@
+{
+  "name": "travel-roulette",
+  "version": "1.0.0",
+  "description": "日本全国の旅行先をルーレットで提案するWebアプリ",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
