@@ -98,7 +98,7 @@ function fallbackItem(location, category, reason) {
   return {
     name: `${category}をGoogleで探す`,
     rating: null,
-    address: reason || "Google Places APIキー未設定、または取得に失敗しました。",
+    address: reason || "おすすめ取得に失敗しました。代替リンクを表示しています。",
     mapUrl: `https://www.google.com/search?q=${encodeURIComponent(query)}`,
     photoUrl: "",
     fallback: true
@@ -107,32 +107,39 @@ function fallbackItem(location, category, reason) {
 
 async function fetchGooglePlaces(location, mode, category) {
   const keyword = buildKeyword(location, mode, category);
-  const textSearchUrl = new URL("https://maps.googleapis.com/maps/api/place/textsearch/json");
-  textSearchUrl.searchParams.set("query", keyword);
-  textSearchUrl.searchParams.set("language", "ja");
-  textSearchUrl.searchParams.set("region", "jp");
-  textSearchUrl.searchParams.set("key", GOOGLE_PLACES_API_KEY);
+  const response = await fetch("https://places.googleapis.com/v1/places:searchText", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Goog-Api-Key": GOOGLE_PLACES_API_KEY,
+      "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.rating,places.googleMapsUri,places.photos"
+    },
+    body: JSON.stringify({
+      textQuery: keyword,
+      languageCode: "ja"
+    })
+  });
 
-  const response = await fetch(textSearchUrl);
+  const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(`Google Places API HTTP ${response.status}`);
+    const apiMessage = data.error && data.error.message ? data.error.message : "No error message returned";
+    const error = new Error(`Places API (New) HTTP ${response.status}: ${apiMessage}`);
+    error.details = data;
+    throw error;
   }
 
-  const data = await response.json();
-  if (!["OK", "ZERO_RESULTS"].includes(data.status)) {
-    throw new Error(data.error_message || `Google Places API status: ${data.status}`);
-  }
-
-  return (data.results || []).slice(0, 6).map((place) => {
-    const photoRef = place.photos && place.photos[0] && place.photos[0].photo_reference;
-    const photoUrl = photoRef
-      ? `/api/photo?reference=${encodeURIComponent(photoRef)}&maxwidth=640`
+  return (data.places || []).slice(0, 6).map((place) => {
+    const name = place.displayName && place.displayName.text ? place.displayName.text : "名称不明";
+    const address = place.formattedAddress || "";
+    const photo = place.photos && place.photos[0] && place.photos[0].name;
+    const photoUrl = photo
+      ? `/api/photo?name=${encodeURIComponent(photo)}&maxHeightPx=400&maxWidthPx=600`
       : "";
     return {
-      name: place.name,
+      name,
       rating: place.rating || null,
-      address: place.formatted_address || "",
-      mapUrl: mapUrl(place.name, place.formatted_address),
+      address,
+      mapUrl: place.googleMapsUri || mapUrl(name, address),
       photoUrl
     };
   });
@@ -153,7 +160,7 @@ app.get("/api/recommendations", async (req, res) => {
   const results = {};
   if (!GOOGLE_PLACES_API_KEY) {
     categories.forEach((category) => {
-      results[category] = [fallbackItem(location, category, "GOOGLE_PLACES_API_KEY が未設定です。")];
+      results[category] = [fallbackItem(location, category, "おすすめ取得に失敗しました。代替リンクを表示しています。")];
     });
     return res.json({ location, mode, results, fallback: true });
   }
@@ -165,7 +172,14 @@ app.get("/api/recommendations", async (req, res) => {
         ? places
         : [fallbackItem(location, category, "該当するスポットが見つかりませんでした。")];
     } catch (error) {
-      results[category] = [fallbackItem(location, category, error.message)];
+      console.error("Places API (New) searchText failed", {
+        location,
+        mode,
+        category,
+        message: error.message,
+        details: error.details || null
+      });
+      results[category] = [fallbackItem(location, category, "おすすめ取得に失敗しました。代替リンクを表示しています。")];
     }
   }));
 
@@ -173,24 +187,37 @@ app.get("/api/recommendations", async (req, res) => {
 });
 
 app.get("/api/photo", async (req, res) => {
-  const reference = String(req.query.reference || "");
-  const maxwidth = String(req.query.maxwidth || "640");
+  const name = String(req.query.name || "");
+  const maxHeightPx = String(req.query.maxHeightPx || "400");
+  const maxWidthPx = String(req.query.maxWidthPx || "600");
 
-  if (!GOOGLE_PLACES_API_KEY || !reference) {
+  if (!GOOGLE_PLACES_API_KEY || !name) {
     return res.status(404).send("Photo not available");
   }
 
-  const url = new URL("https://maps.googleapis.com/maps/api/place/photo");
-  url.searchParams.set("photo_reference", reference);
-  url.searchParams.set("maxwidth", maxwidth);
+  const url = new URL(`https://places.googleapis.com/v1/${name}/media`);
+  url.searchParams.set("maxHeightPx", maxHeightPx);
+  url.searchParams.set("maxWidthPx", maxWidthPx);
   url.searchParams.set("key", GOOGLE_PLACES_API_KEY);
 
   try {
     const response = await fetch(url, { redirect: "manual" });
     const location = response.headers.get("location");
     if (location) return res.redirect(location);
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      console.error("Places API (New) photo media failed", {
+        name,
+        status: response.status,
+        body
+      });
+    }
     return res.status(response.status).send("Photo not available");
-  } catch {
+  } catch (error) {
+    console.error("Places API (New) photo media request failed", {
+      name,
+      message: error.message
+    });
     return res.status(502).send("Photo not available");
   }
 });

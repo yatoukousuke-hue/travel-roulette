@@ -50,7 +50,7 @@ http://localhost:3000
 
 1. Google Cloud Consoleでプロジェクトを作成します。
 2. Billingを有効化します。
-3. 「APIs & Services」から Places API を有効化します。
+3. 「APIs & Services」から Places API (New) を有効化します。
 4. 「Credentials」でAPIキーを作成します。
 5. 必要に応じてHTTPリファラーやIP、API制限を設定します。
 
